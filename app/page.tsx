@@ -532,5 +532,14 @@ export default function Home() {
 
       <footer>FRAME © 2026 — CONNECT. CREATE. COLLABORATE.</footer>
     </main>
+    const [introVisible, setIntroVisible] = useState(true);
+
+useEffect(() => {
+  const timer = window.setTimeout(() => {
+    setIntroVisible(false);
+  }, 1900);
+
+  return () => window.clearTimeout(timer);
+}, []);
   );
 }
