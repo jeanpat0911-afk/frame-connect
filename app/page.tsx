@@ -11,7 +11,20 @@ type Profile = {
   city: string;
   bio: string;
   instagram?: string;
+  tiktok?: string;
+  website?: string;
+  portfolio_url?: string;
+  linkedin?: string;
+  avatar_url?: string;
 };
+
+function cleanUrl(value: string) {
+  if (!value.trim()) return "";
+  const url = /^https?:\/\//i.test(value.trim())
+    ? value.trim()
+    : `https://${value.trim()}`;
+  return url;
+}
 
 export default function Home() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -19,35 +32,84 @@ export default function Home() {
   const [city, setCity] = useState("");
   const [user, setUser] = useState<any>(null);
   const [msg, setMsg] = useState("");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [name, setName] = useState("");
   const [job, setJob] = useState("Mannequin");
   const [town, setTown] = useState("");
   const [bio, setBio] = useState("");
 
-  async function load() {
-    if (!supabase) return;
+  const [instagram, setInstagram] = useState("");
+  const [tiktok, setTiktok] = useState("");
+  const [website, setWebsite] = useState("");
+  const [portfolio, setPortfolio] = useState("");
+  const [linkedin, setLinkedin] = useState("");
+  const [avatar, setAvatar] = useState("");
 
+  async function loadProfiles() {
+    if (!supabase) return;
     const { data } = await supabase
       .from("profiles")
       .select("*")
       .order("created_at", { ascending: false });
 
-    setProfiles(data || []);
+    setProfiles((data || []) as Profile[]);
+  }
+
+  async function loadMyProfile(userId: string) {
+    if (!supabase) return;
+
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (!data) return;
+
+    setName(data.name || "");
+    setJob(data.role || "Mannequin");
+    setTown(data.city || "");
+    setBio(data.bio || "");
+    setInstagram(data.instagram || "");
+    setTiktok(data.tiktok || "");
+    setWebsite(data.website || "");
+    setPortfolio(data.portfolio_url || "");
+    setLinkedin(data.linkedin || "");
+    setAvatar(data.avatar_url || "");
   }
 
   useEffect(() => {
-    if (!supabase) return;
+    loadProfiles();
 
-    load();
+    if (!supabase) return;
 
     supabase.auth.getUser().then(({ data }) => {
       setUser(data.user);
+      if (data.user) loadMyProfile(data.user.id);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(
-      (_event, session) => setUser(session?.user || null)
+      (_event, session) => {
+        const currentUser = session?.user || null;
+        setUser(currentUser);
+
+        if (currentUser) {
+          loadMyProfile(currentUser.id);
+        } else {
+          setName("");
+          setTown("");
+          setBio("");
+          setInstagram("");
+          setTiktok("");
+          setWebsite("");
+          setPortfolio("");
+          setLinkedin("");
+          setAvatar("");
+        }
+      }
     );
 
     return () => listener.subscription.unsubscribe();
@@ -71,12 +133,15 @@ export default function Home() {
 
     if (data.user) {
       setUser(data.user);
-      setMsg("Compte créé. Vérifie ton email si demandé.");
+      setMsg("Compte créé. Vérifie ton email si nécessaire.");
     }
   }
 
   async function save() {
-    if (!supabase || !user) return;
+    if (!supabase || !user) {
+      setMsg("Connecte-toi pour enregistrer ton profil.");
+      return;
+    }
 
     const { error } = await supabase.from("profiles").upsert({
       id: user.id,
@@ -84,15 +149,31 @@ export default function Home() {
       role: job,
       city: town,
       bio,
+      instagram,
+      tiktok,
+      website,
+      portfolio_url: portfolio,
+      linkedin,
+      avatar_url: avatar,
     });
 
-    setMsg(error?.message || "Profil enregistré !");
-    load();
+    if (error) {
+      setMsg("Erreur : " + error.message);
+      return;
+    }
+
+    setMsg("Ton profil FRAME a bien été enregistré !");
+    loadProfiles();
   }
 
   async function request(id: string) {
     if (!supabase || !user) {
       setMsg("Connecte-toi pour contacter ce profil.");
+      return;
+    }
+
+    if (id === user.id) {
+      setMsg("C'est ton propre profil !");
       return;
     }
 
@@ -104,7 +185,7 @@ export default function Home() {
         message: "Bonjour, intéressé(e) par une collaboration !",
       });
 
-    setMsg(error?.message || "Demande envoyée !");
+    setMsg(error ? error.message : "Demande de shooting envoyée !");
   }
 
   const shown = profiles.filter(
@@ -118,7 +199,7 @@ export default function Home() {
       <nav>
         <b>FRAME<span>.</span></b>
         <small>THE CREATIVE NETWORK</small>
-        <a href="#account">Connexion / profil</a>
+        <a href="#account">Mon profil</a>
         {user && <a href="/messages">Messages</a>}
       </nav>
 
@@ -128,9 +209,7 @@ export default function Home() {
         <p className="sub">
           La plateforme qui connecte mannequins, photographes et talents créatifs.
         </p>
-        <a className="cta" href="#discover">
-          Découvrir les profils ↘
-        </a>
+        <a className="cta" href="#discover">Découvrir les profils ↘</a>
       </section>
 
       <section id="discover">
@@ -150,7 +229,6 @@ export default function Home() {
             <option>Styliste</option>
             <option>Make-up artist</option>
           </select>
-
           <input
             placeholder="Filtrer par ville"
             value={city}
@@ -161,50 +239,54 @@ export default function Home() {
         <div className="cards">
           {shown.map((p) => (
             <article key={p.id}>
-              <div className="avatar">
-                {p.role === "Photographe" ? "◉" :
-                 p.role === "Mannequin" ? "✳" : "✦"}
-              </div>
+              {p.avatar_url ? (
+                <img
+                  src={cleanUrl(p.avatar_url)}
+                  alt={`Photo de ${p.name}`}
+                  className="avatar"
+                  style={{
+                    width: "100%",
+                    height: 220,
+                    objectFit: "cover",
+                    borderRadius: 8,
+                  }}
+                />
+              ) : (
+                <div className="avatar">
+                  {p.role === "Photographe" ? "◉" : p.role === "Mannequin" ? "✳" : "✦"}
+                </div>
+              )}
 
-              <small>{p.role.toUpperCase()}</small>
-              <h3>{p.name}</h3>
+              <small>{(p.role || "Talent").toUpperCase()}</small>
+              <h3>{p.name || "Talent FRAME"}</h3>
               <p>{p.city}</p>
               <p className="bio">{p.bio}</p>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10, margin: "12px 0" }}>
+                {p.instagram && <a href={cleanUrl(p.instagram)} target="_blank" rel="noreferrer">Instagram ↗</a>}
+                {p.tiktok && <a href={cleanUrl(p.tiktok)} target="_blank" rel="noreferrer">TikTok ↗</a>}
+                {p.website && <a href={cleanUrl(p.website)} target="_blank" rel="noreferrer">Site web ↗</a>}
+                {p.portfolio_url && <a href={cleanUrl(p.portfolio_url)} target="_blank" rel="noreferrer">Portfolio ↗</a>}
+                {p.linkedin && <a href={cleanUrl(p.linkedin)} target="_blank" rel="noreferrer">LinkedIn ↗</a>}
+              </div>
 
               <button onClick={() => request(p.id)}>
                 Proposer un shooting ↗
               </button>
-
-              <a
-                href={`/messages?to=${encodeURIComponent(p.id)}`}
-                style={{
-                  display: "inline-block",
-                  marginTop: 12,
-                  padding: "12px 18px",
-                  background: "#7546ff",
-                  color: "white",
-                  borderRadius: 8,
-                  textDecoration: "none",
-                }}
-              >
-                Envoyer un message ↗
-              </a>
             </article>
           ))}
         </div>
 
         {shown.length === 0 && (
-          <p className="empty">
-            Aucun profil pour le moment. Crée le premier !
-          </p>
+          <p className="empty">Aucun profil pour le moment. Crée le premier !</p>
         )}
       </section>
 
       <section id="account">
         <div className="heading">
           <div>
-            <small>02 — JOIN FRAME</small>
-            <h2>Ton espace</h2>
+            <small>02 — YOUR SPACE</small>
+            <h2>Ton profil FRAME</h2>
           </div>
         </div>
 
@@ -215,20 +297,19 @@ export default function Home() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
-
             <input
               placeholder="Mot de passe (6 caractères min.)"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
-
             <button onClick={auth}>Créer mon compte</button>
           </div>
         ) : (
           <div className="profile">
             <p>Connecté : {user.email}</p>
 
+            <h3>Informations personnelles</h3>
             <input
               placeholder="Nom affiché"
               value={name}
@@ -254,9 +335,43 @@ export default function Home() {
               onChange={(e) => setBio(e.target.value)}
             />
 
-            <button onClick={save}>Enregistrer mon profil</button>
+            <h3>Photo de profil</h3>
+            <input
+              placeholder="Lien URL de ta photo"
+              value={avatar}
+              onChange={(e) => setAvatar(e.target.value)}
+            />
 
-            <a href="/messages">Ouvrir ma messagerie ↗</a>
+            <h3>Mes réseaux sociaux</h3>
+            <input
+              placeholder="Lien Instagram ou @identifiant"
+              value={instagram}
+              onChange={(e) => setInstagram(e.target.value)}
+            />
+            <input
+              placeholder="Lien TikTok ou @identifiant"
+              value={tiktok}
+              onChange={(e) => setTiktok(e.target.value)}
+            />
+            <input
+              placeholder="Lien LinkedIn"
+              value={linkedin}
+              onChange={(e) => setLinkedin(e.target.value)}
+            />
+
+            <h3>Mon univers professionnel</h3>
+            <input
+              placeholder="Site web personnel"
+              value={website}
+              onChange={(e) => setWebsite(e.target.value)}
+            />
+            <input
+              placeholder="Lien vers mon portfolio"
+              value={portfolio}
+              onChange={(e) => setPortfolio(e.target.value)}
+            />
+
+            <button onClick={save}>Enregistrer mon profil</button>
 
             <button
               className="secondary"
@@ -274,3 +389,4 @@ export default function Home() {
     </main>
   );
 }
+
