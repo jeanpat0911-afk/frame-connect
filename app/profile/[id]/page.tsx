@@ -3,28 +3,24 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
 type Profile = {
   id: string;
-  name: string;
-  role: string;
-  city: string;
-  bio: string;
+  name?: string;
+  role?: string;
+  city?: string;
+  bio?: string;
   instagram?: string;
   tiktok?: string;
-  website?: string;
-  portfolio_url?: string;
   linkedin?: string;
+  website?: string;
+  portfolio?: string;
   avatar_url?: string;
 };
 
-function makeUrl(value?: string) {
-  if (!value) return "";
-  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
-}
-
-export default function PublicProfile() {
+export default function ProfilePage() {
   const params = useParams();
   const id = params.id as string;
 
@@ -35,7 +31,7 @@ export default function PublicProfile() {
   useEffect(() => {
     async function loadProfile() {
       if (!supabase || !id) {
-        setError("Impossible de charger le profil.");
+        setError("Connexion indisponible.");
         setLoading(false);
         return;
       }
@@ -44,12 +40,12 @@ export default function PublicProfile() {
         .from("profiles")
         .select("*")
         .eq("id", id)
-        .maybeSingle();
+        .single();
 
-      if (error || !data) {
-        setError("Ce profil n'existe pas ou n'est pas accessible.");
+      if (error) {
+        setError("Profil introuvable ou inaccessible.");
       } else {
-        setProfile(data as Profile);
+        setProfile(data);
       }
 
       setLoading(false);
@@ -58,222 +54,249 @@ export default function PublicProfile() {
     loadProfile();
   }, [id]);
 
-  if (loading) {
-    return <main style={styles.page}>Chargement du profil...</main>;
-  }
+  const socialLink = (url?: string) => {
+    if (!url) return "";
+    return url.startsWith("http") ? url : `https://${url}`;
+  };
 
-  if (error || !profile) {
+  if (loading) {
     return (
-      <main style={styles.page}>
-        <a href="/" style={styles.back}>← Retour à FRAME</a>
-        <h1>Profil introuvable</h1>
-        <p>{error}</p>
+      <main style={styles.center}>
+        Chargement du profil...
       </main>
     );
   }
 
-  const socials = [
-    { label: "INSTAGRAM", value: profile.instagram },
-    { label: "TIKTOK", value: profile.tiktok },
-    { label: "LINKEDIN", value: profile.linkedin },
-    { label: "SITE WEB", value: profile.website },
-    { label: "PORTFOLIO", value: profile.portfolio_url },
-  ].filter((item) => item.value);
+  if (error || !profile) {
+    return (
+      <main style={styles.center}>
+        <h2>{error || "Profil introuvable"}</h2>
+        <Link href="/" style={styles.back}>Retour à FRAME</Link>
+      </main>
+    );
+  }
 
   return (
     <main style={styles.page}>
       <nav style={styles.nav}>
-        <a href="/" style={styles.logo}>FRAME<span>.</span></a>
-        <a href="/#discover" style={styles.back}>DÉCOUVRIR LES TALENTS ↗</a>
+        <Link href="/" style={styles.logo}>FRAME<span>.</span></Link>
+        <Link href="/" style={styles.back}>← Découvrir les talents</Link>
       </nav>
 
-      <section style={styles.hero}>
-        <div style={styles.photoContainer}>
+      <section style={styles.container}>
+        <div style={styles.hero}>
           {profile.avatar_url ? (
             <img
-              src={makeUrl(profile.avatar_url)}
-              alt={profile.name}
-              style={styles.photo}
+              src={profile.avatar_url}
+              alt={profile.name || "Photo de profil"}
+              style={styles.avatar}
             />
           ) : (
-            <div style={styles.noPhoto}>FRAME</div>
+            <div style={styles.placeholder}>
+              {(profile.name || "F").charAt(0).toUpperCase()}
+            </div>
           )}
+
+          <div>
+            <p style={styles.eyebrow}>FRAME TALENT</p>
+            <h1 style={styles.name}>
+              {profile.name || "Talent FRAME"}
+            </h1>
+            <p style={styles.role}>{profile.role || "Créatif"}</p>
+            {profile.city && <p style={styles.city}>📍 {profile.city}</p>}
+          </div>
         </div>
 
-        <div style={styles.info}>
-          <p style={styles.eyebrow}>FRAME MEMBER — {profile.role}</p>
-          <h1 style={styles.name}>{profile.name || "Talent FRAME"}</h1>
-          <p style={styles.city}>{profile.city || "Ville non renseignée"}</p>
-
-          <div style={styles.line} />
-
-          <h2 style={styles.sectionTitle}>À PROPOS</h2>
+        <div style={styles.section}>
+          <h2>À propos</h2>
           <p style={styles.bio}>
             {profile.bio || "Ce talent n'a pas encore ajouté de présentation."}
           </p>
+        </div>
 
-          <div style={styles.line} />
+        <div style={styles.section}>
+          <h2>Réseaux & portfolio</h2>
+          <div style={styles.links}>
+            {profile.instagram && (
+              <a href={socialLink(profile.instagram)} target="_blank" rel="noreferrer" style={styles.social}>
+                Instagram ↗
+              </a>
+            )}
+            {profile.tiktok && (
+              <a href={socialLink(profile.tiktok)} target="_blank" rel="noreferrer" style={styles.social}>
+                TikTok ↗
+              </a>
+            )}
+            {profile.linkedin && (
+              <a href={socialLink(profile.linkedin)} target="_blank" rel="noreferrer" style={styles.social}>
+                LinkedIn ↗
+              </a>
+            )}
+            {profile.website && (
+              <a href={socialLink(profile.website)} target="_blank" rel="noreferrer" style={styles.social}>
+                Site web ↗
+              </a>
+            )}
+            {profile.portfolio && (
+              <a href={socialLink(profile.portfolio)} target="_blank" rel="noreferrer" style={styles.social}>
+                Portfolio ↗
+              </a>
+            )}
+            {!profile.instagram && !profile.tiktok && !profile.linkedin && !profile.website && !profile.portfolio && (
+              <p>Aucun lien ajouté pour le moment.</p>
+            )}
+          </div>
+        </div>
 
-          <h2 style={styles.sectionTitle}>CONNECT</h2>
-          {socials.length > 0 ? (
-            <div style={styles.socials}>
-              {socials.map((item) => (
-                <a
-                  key={item.label}
-                  href={makeUrl(item.value)}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={styles.socialLink}
-                >
-                  {item.label} ↗
-                </a>
-              ))}
-            </div>
-          ) : (
-            <p style={styles.muted}>Aucun réseau ajouté pour le moment.</p>
-          )}
-
-          <a
-            href={`/messages?to=${profile.id}`}
-            style={styles.contact}
-          >
-            ENVOYER UN MESSAGE ↗
-          </a>
+        <div style={styles.actions}>
+          <Link href={`/messages?to=${profile.id}`} style={styles.contact}>
+            Contacter ce talent ↗
+          </Link>
+          <Link href="/" style={styles.secondary}>
+            Retour à la découverte
+          </Link>
         </div>
       </section>
 
-      <footer style={styles.footer}>
-        FRAME © 2026 — CONNECT. CREATE. COLLABORATE.
-      </footer>
+      <footer style={styles.footer}>FRAME © 2026 — Creative connections.</footer>
     </main>
   );
 }
 
-const styles: { [key: string]: React.CSSProperties } = {
+const styles: Record<string, React.CSSProperties> = {
   page: {
     minHeight: "100vh",
-    background: "#f5f4f0",
-    color: "#171717",
-    padding: "30px 7%",
+    background: "#080808",
+    color: "#fff",
     fontFamily: "Arial, sans-serif",
+    padding: "0 7%",
   },
   nav: {
+    height: 85,
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
-    borderBottom: "1px solid #ccc",
-    paddingBottom: 22,
-    marginBottom: 55,
+    justifyContent: "space-between",
+    borderBottom: "1px solid #252525",
   },
   logo: {
-    fontSize: 28,
+    fontSize: 27,
     fontWeight: 900,
-    letterSpacing: "-2px",
-    color: "#171717",
+    letterSpacing: -2,
+    color: "white",
     textDecoration: "none",
   },
   back: {
-    color: "#171717",
-    fontSize: 11,
-    letterSpacing: 1,
+    color: "#aaa",
     textDecoration: "none",
+    fontSize: 13,
+  },
+  container: {
+    maxWidth: 850,
+    margin: "75px auto",
   },
   hero: {
-    display: "grid",
-    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
-    gap: 55,
+    display: "flex",
     alignItems: "center",
-    maxWidth: 1100,
-    margin: "0 auto",
+    gap: 35,
+    flexWrap: "wrap",
   },
-  photoContainer: {
-    width: "100%",
-    minHeight: 480,
-    background: "#dedbd4",
-    overflow: "hidden",
-  },
-  photo: {
-    width: "100%",
-    height: 560,
+  avatar: {
+    width: 190,
+    height: 230,
     objectFit: "cover",
-    display: "block",
+    borderRadius: 8,
+    background: "#222",
   },
-  noPhoto: {
-    minHeight: 480,
-    display: "grid",
-    placeItems: "center",
-    fontSize: 50,
-    fontWeight: 900,
-    letterSpacing: 8,
-    color: "#aaa69e",
-  },
-  info: {
-    padding: "25px 0",
+  placeholder: {
+    width: 190,
+    height: 230,
+    borderRadius: 8,
+    background: "#222",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 65,
+    color: "#888",
   },
   eyebrow: {
+    color: "#aaa",
+    letterSpacing: 4,
     fontSize: 11,
-    letterSpacing: 2,
-    color: "#777",
   },
   name: {
-    fontSize: "clamp(42px, 7vw, 76px)",
-    lineHeight: 0.95,
-    letterSpacing: "-4px",
-    margin: "20px 0 12px",
-    textTransform: "uppercase",
+    fontSize: 43,
+    margin: "12px 0",
+    letterSpacing: -2,
+  },
+  role: {
+    color: "#ccc",
+    fontSize: 17,
   },
   city: {
+    color: "#999",
     fontSize: 14,
-    color: "#777",
   },
-  line: {
-    height: 1,
-    background: "#ccc",
-    margin: "30px 0",
-  },
-  sectionTitle: {
-    fontSize: 11,
-    letterSpacing: 2,
-    marginBottom: 15,
+  section: {
+    marginTop: 65,
+    borderTop: "1px solid #292929",
+    paddingTop: 25,
   },
   bio: {
-    fontSize: 16,
+    color: "#bbb",
     lineHeight: 1.8,
     whiteSpace: "pre-wrap",
   },
-  socials: {
+  links: {
     display: "flex",
     flexWrap: "wrap",
     gap: 12,
+    marginTop: 20,
   },
-  socialLink: {
-    border: "1px solid #aaa",
-    padding: "12px 15px",
-    color: "#171717",
-    fontSize: 11,
-    letterSpacing: 1,
+  social: {
+    color: "white",
+    border: "1px solid #444",
+    padding: "13px 19px",
+    borderRadius: 4,
     textDecoration: "none",
-  },
-  muted: {
-    color: "#777",
     fontSize: 13,
   },
+  actions: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 15,
+    marginTop: 55,
+  },
   contact: {
-    display: "inline-block",
-    marginTop: 35,
-    padding: "18px 25px",
-    background: "#171717",
-    color: "#fff",
+    background: "white",
+    color: "black",
+    padding: "16px 24px",
     textDecoration: "none",
-    fontSize: 12,
-    letterSpacing: 1,
+    fontWeight: 700,
+    borderRadius: 4,
+  },
+  secondary: {
+    color: "white",
+    padding: "16px 20px",
+    border: "1px solid #444",
+    textDecoration: "none",
+    borderRadius: 4,
   },
   footer: {
-    borderTop: "1px solid #ccc",
-    marginTop: 80,
-    paddingTop: 25,
-    fontSize: 10,
-    letterSpacing: 2,
-    color: "#777",
+    borderTop: "1px solid #252525",
+    padding: "30px 0",
+    color: "#666",
+    fontSize: 12,
+    textAlign: "center",
+  },
+  center: {
+    minHeight: "100vh",
+    background: "#080808",
+    color: "white",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 20,
+    fontFamily: "Arial, sans-serif",
   },
 };
