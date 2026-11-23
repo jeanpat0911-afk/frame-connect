@@ -24,13 +24,41 @@ type Profile = {
   experience?: string;
 };
 
+type Photo = {
+  id: string;
+  user_id: string;
+  image_url: string;
+  storage_path: string;
+};
+
 export default function ProfilePage() {
   const params = useParams();
   const id = params.id as string;
 
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [currentUser, setCurrentUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  async function loadPhotos() {
+    if (!supabase) return;
+
+    const { data, error } = await supabase
+      .from("profile_photos")
+      .select("*")
+      .eq("user_id", id)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setError("Impossible de charger le portfolio : " + error.message);
+      return;
+    }
+
+    setPhotos((data || []) as Photo[]);
+  }
 
   useEffect(() => {
     async function load() {
@@ -40,16 +68,31 @@ export default function ProfilePage() {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", id)
-        .maybeSingle();
+      const [{ data: profileData, error: profileError }, { data: authData }] =
+        await Promise.all([
+          supabase.from("profiles").select("*").eq("id", id).maybeSingle(),
+          supabase.auth.getUser(),
+        ]);
 
-      if (error || !data) {
+      if (profileError || !profileData) {
         setError("Profil introuvable ou inaccessible.");
+        setLoading(false);
+        return;
+      }
+
+      setProfile(profileData as Profile);
+      setCurrentUser(authData.user);
+
+      const { data: photoData, error: photoError } = await supabase
+        .from("profile_photos")
+        .select("*")
+        .eq("user_id", id)
+        .order("created_at", { ascending: false });
+
+      if (photoError) {
+        setError("Erreur portfolio : " + photoError.message);
       } else {
-        setProfile(data as Profile);
+        setPhotos((photoData || []) as Photo[]);
       }
 
       setLoading(false);
@@ -58,12 +101,111 @@ export default function ProfilePage() {
     load();
   }, [id]);
 
+  async function uploadPhotos(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files || []);
+
+    if (!supabase || !currentUser || currentUser.id !== id) {
+      setNotice("Connecte-toi avec le compte propriétaire du profil.");
+      return;
+    }
+
+    if (files.length === 0) return;
+
+    if (files.length + photos.length > 30) {
+      setNotice("Maximum 30 photos dans ton portfolio.");
+      event.target.value = "";
+      return;
+    }
+
+    setUploading(true);
+    setNotice("");
+
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) {
+        setNotice("Seules les images sont acceptées.");
+        continue;
+      }
+
+      if (file.size > 8 * 1024 * 1024) {
+        setNotice(`${file.name} dépasse la limite de 8 Mo.`);
+        continue;
+      }
+
+      const extension = file.name.split(".").pop() || "jpg";
+      const path = `${currentUser.id}/${crypto.randomUUID()}.${extension}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("portfolio")
+        .upload(path, file, {
+          contentType: file.type,
+          upsert: false,
+        });
+
+      if (uploadError) {
+        setNotice("Erreur d'envoi : " + uploadError.message);
+        continue;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from("portfolio")
+        .getPublicUrl(path);
+
+      const { error: insertError } = await supabase
+        .from("profile_photos")
+        .insert({
+          user_id: currentUser.id,
+          image_url: urlData.publicUrl,
+          storage_path: path,
+        });
+
+      if (insertError) {
+        await supabase.storage.from("portfolio").remove([path]);
+        setNotice("Erreur d'enregistrement : " + insertError.message);
+      }
+    }
+
+    await loadPhotos();
+    setUploading(false);
+    event.target.value = "";
+    setNotice("Importation terminée.");
+  }
+
+  async function deletePhoto(photo: Photo) {
+    if (!supabase || !currentUser || currentUser.id !== id) return;
+
+    const confirmed = window.confirm("Supprimer définitivement cette photo ?");
+    if (!confirmed) return;
+
+    const { error: storageError } = await supabase.storage
+      .from("portfolio")
+      .remove([photo.storage_path]);
+
+    if (storageError) {
+      setNotice("Erreur de suppression : " + storageError.message);
+      return;
+    }
+
+    const { error: dbError } = await supabase
+      .from("profile_photos")
+      .delete()
+      .eq("id", photo.id)
+      .eq("user_id", currentUser.id);
+
+    if (dbError) {
+      setNotice("Erreur : " + dbError.message);
+      return;
+    }
+
+    setPhotos((previous) => previous.filter((item) => item.id !== photo.id));
+    setNotice("Photo supprimée.");
+  }
+
   const links = [
     { label: "Instagram", url: profile?.instagram },
     { label: "TikTok", url: profile?.tiktok },
     { label: "LinkedIn", url: profile?.linkedin_url },
     { label: "Site web", url: profile?.website_url },
-    { label: "Portfolio", url: profile?.portfolio_url },
+    { label: "Portfolio externe", url: profile?.portfolio_url },
     { label: "Behance", url: profile?.behance },
     { label: "YouTube", url: profile?.youtube },
   ].filter((item) => item.url);
@@ -73,188 +215,245 @@ export default function ProfilePage() {
     return /^https?:\/\//i.test(url) ? url : `https://${url}`;
   };
 
-  const styles: Record<string, React.CSSProperties> = {
-    page: {
-      minHeight: "100vh",
-      background: "#080808",
-      color: "#fff",
-      fontFamily: "Arial, sans-serif",
-      padding: "0 7%",
-    },
-    nav: {
-      height: 80,
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      borderBottom: "1px solid #292929",
-    },
-    logo: {
-      color: "#fff",
-      textDecoration: "none",
-      fontSize: 28,
-      fontWeight: 900,
-      letterSpacing: -2,
-    },
-    container: {
-      maxWidth: 850,
-      margin: "65px auto",
-    },
-    hero: {
-      display: "flex",
-      alignItems: "center",
-      flexWrap: "wrap",
-      gap: 30,
-    },
-    photo: {
-      width: 190,
-      height: 230,
-      objectFit: "cover",
-      borderRadius: 6,
-      background: "#222",
-    },
-    placeholder: {
-      width: 190,
-      height: 230,
-      background: "#222",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontSize: 60,
-      borderRadius: 6,
-    },
-    section: {
-      marginTop: 55,
-      paddingTop: 25,
-      borderTop: "1px solid #292929",
-    },
-    muted: {
-      color: "#aaa",
-      lineHeight: 1.8,
-      whiteSpace: "pre-wrap",
-    },
-    link: {
-      display: "inline-block",
-      color: "#fff",
-      textDecoration: "none",
-      border: "1px solid #444",
-      padding: "12px 17px",
-      borderRadius: 4,
-      margin: "6px",
-      fontSize: 13,
-    },
-    button: {
-      display: "inline-block",
-      background: "#fff",
-      color: "#000",
-      padding: "15px 22px",
-      borderRadius: 4,
-      textDecoration: "none",
-      fontWeight: 700,
-      marginTop: 30,
-    },
-  };
+  if (loading) {
+    return <main className="page">Chargement du profil...</main>;
+  }
 
-  if (loading || error || !profile) {
+  if (error && !profile) {
     return (
-      <main style={{ ...styles.page, paddingTop: 100 }}>
-        <p>{loading ? "Chargement du profil..." : error}</p>
-        <Link href="/" style={{ color: "#fff" }}>
-          Retour à FRAME
-        </Link>
+      <main className="page">
+        <h2>{error}</h2>
+        <Link href="/">Retour à FRAME</Link>
       </main>
     );
   }
 
+  if (!profile) return null;
+
+  const isOwner = currentUser?.id === profile.id;
+
   return (
-    <main style={styles.page}>
-      <nav style={styles.nav}>
-        <Link href="/" style={styles.logo}>FRAME.</Link>
-        <Link href="/" style={{ color: "#aaa", textDecoration: "none" }}>
-          ← Découvrir
-        </Link>
+    <main className="page">
+      <nav className="nav">
+        <Link href="/" className="logo">FRAME.</Link>
+        <Link href="/">← Découvrir</Link>
       </nav>
 
-      <div style={styles.container}>
-        <section style={styles.hero}>
+      <div className="container">
+        <section className="hero">
           {profile.avatar_url ? (
             <img
               src={profile.avatar_url}
               alt={profile.name || "Photo de profil"}
-              style={styles.photo}
+              className="avatar"
             />
           ) : (
-            <div style={styles.placeholder}>
+            <div className="placeholder">
               {(profile.name || "F").charAt(0).toUpperCase()}
             </div>
           )}
 
           <div>
-            <p style={{ color: "#999", letterSpacing: 4, fontSize: 11 }}>
-              FRAME TALENT
-            </p>
-            <h1 style={{ fontSize: 42, margin: "10px 0" }}>
-              {profile.name || "Talent FRAME"}
-            </h1>
-            <p style={{ color: "#ccc" }}>{profile.role}</p>
-            <p style={{ color: "#999" }}>
-              {profile.city ? `📍 ${profile.city}` : ""}
-            </p>
+            <p className="eyebrow">FRAME TALENT</p>
+            <h1>{profile.name || "Talent FRAME"}</h1>
+            <p>{profile.role}</p>
+            <p className="muted">{profile.city && `📍 ${profile.city}`}</p>
           </div>
         </section>
 
-        <section style={styles.section}>
+        <section className="section">
           <h2>À propos</h2>
-          <p style={styles.muted}>
-            {profile.bio || "Aucune présentation pour le moment."}
-          </p>
+          <p className="muted">{profile.bio || "Aucune présentation."}</p>
         </section>
 
         {profile.specialties && (
-          <section style={styles.section}>
+          <section className="section">
             <h2>Spécialités</h2>
-            <p style={styles.muted}>{profile.specialties}</p>
+            <p className="muted">{profile.specialties}</p>
           </section>
         )}
 
         {profile.experience && (
-          <section style={styles.section}>
+          <section className="section">
             <h2>Expérience & projets</h2>
-            <p style={styles.muted}>{profile.experience}</p>
+            <p className="muted">{profile.experience}</p>
           </section>
         )}
 
-        <section style={styles.section}>
-          <h2>Réseaux & portfolio</h2>
-          {links.length > 0 ? (
-            <div style={{ marginTop: 20 }}>
-              {links.map((item) => (
-                <a
-                  key={item.label}
-                  href={linkUrl(item.url)}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={styles.link}
-                >
-                  {item.label} ↗
-                </a>
-              ))}
+        <section className="section">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">PORTFOLIO</p>
+              <h2>Galerie photo</h2>
             </div>
-          ) : (
-            <p style={styles.muted}>Aucun lien ajouté pour le moment.</p>
+            <span>{photos.length} / 30</span>
+          </div>
+
+          {isOwner && (
+            <label className="upload">
+              {uploading ? "Importation en cours..." : "+ Ajouter des photos"}
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                disabled={uploading}
+                onChange={uploadPhotos}
+                hidden
+              />
+            </label>
+          )}
+
+          {notice && <p className="notice">{notice}</p>}
+
+          <div className="gallery">
+            {photos.map((photo) => (
+              <div className="photo-card" key={photo.id}>
+                <img src={photo.image_url} alt="Photo du portfolio" />
+                {isOwner && (
+                  <button
+                    className="delete"
+                    onClick={() => deletePhoto(photo)}
+                    aria-label="Supprimer cette photo"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {photos.length === 0 && (
+            <p className="muted">
+              {isOwner
+                ? "Ajoute tes premières photos pour construire ton portfolio."
+                : "Ce talent n'a pas encore ajouté de photos."}
+            </p>
           )}
         </section>
 
-        <Link
-          href={`/messages?to=${profile.id}`}
-          style={styles.button}
-        >
+        <section className="section">
+          <h2>Réseaux & liens</h2>
+          <div className="links">
+            {links.map((item) => (
+              <a
+                key={item.label}
+                href={linkUrl(item.url)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {item.label} ↗
+              </a>
+            ))}
+          </div>
+        </section>
+
+        <Link className="contact" href={`/messages?to=${profile.id}`}>
           Contacter ce talent ↗
         </Link>
       </div>
 
-      <footer style={{ textAlign: "center", color: "#666", padding: 30 }}>
-        FRAME © 2026 — CONNECT. CREATE. COLLABORATE.
-      </footer>
+      <footer>FRAME © 2026 — CONNECT. CREATE. COLLABORATE.</footer>
+
+      <style jsx>{`
+        .page {
+          min-height: 100vh;
+          background: #080808;
+          color: white;
+          padding: 0 7%;
+          font-family: Arial, sans-serif;
+        }
+        .nav {
+          height: 80px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          border-bottom: 1px solid #292929;
+        }
+        .nav a { color: #aaa; text-decoration: none; }
+        .nav .logo {
+          color: white;
+          font-size: 28px;
+          font-weight: 900;
+          letter-spacing: -2px;
+        }
+        .container { max-width: 900px; margin: 65px auto; }
+        .hero { display: flex; align-items: center; gap: 30px; flex-wrap: wrap; }
+        .avatar, .placeholder {
+          width: 190px;
+          height: 230px;
+          object-fit: cover;
+          border-radius: 5px;
+          background: #222;
+        }
+        .placeholder {
+          display: grid;
+          place-items: center;
+          font-size: 60px;
+        }
+        h1 { font-size: clamp(32px, 6vw, 48px); margin: 10px 0; }
+        h2 { font-size: 24px; }
+        .eyebrow { color: #999; font-size: 11px; letter-spacing: 3px; }
+        .muted { color: #aaa; line-height: 1.8; white-space: pre-wrap; }
+        .section { margin-top: 55px; padding-top: 25px; border-top: 1px solid #292929; }
+        .section-heading { display: flex; justify-content: space-between; align-items: center; }
+        .section-heading span { color: #999; font-size: 13px; }
+        .upload {
+          display: inline-block;
+          margin: 18px 0;
+          background: white;
+          color: black;
+          padding: 14px 20px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-weight: bold;
+          font-size: 13px;
+        }
+        .gallery {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+          gap: 14px;
+          margin-top: 20px;
+        }
+        .photo-card { position: relative; aspect-ratio: 3 / 4; background: #1c1c1c; overflow: hidden; }
+        .photo-card img { width: 100%; height: 100%; object-fit: cover; }
+        .delete {
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          width: 32px;
+          height: 32px;
+          border: 0;
+          border-radius: 50%;
+          background: white;
+          color: black;
+          font-size: 22px;
+          cursor: pointer;
+        }
+        .links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+        .links a {
+          border: 1px solid #444;
+          padding: 12px 16px;
+          color: white;
+          text-decoration: none;
+          font-size: 13px;
+        }
+        .contact {
+          display: inline-block;
+          margin-top: 35px;
+          padding: 15px 22px;
+          background: white;
+          color: black;
+          text-decoration: none;
+          font-weight: bold;
+        }
+        .notice { color: #ddd; font-size: 13px; }
+        footer { text-align: center; color: #666; padding: 30px 0; font-size: 12px; }
+        @media (max-width: 600px) {
+          .page { padding: 0 5%; }
+          .avatar, .placeholder { width: 130px; height: 160px; }
+          .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+      `}</style>
     </main>
   );
 }
